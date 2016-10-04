@@ -232,8 +232,6 @@ wait025loop
 
     ; check if both buttons have been pushed
     CMP R2, #0x30
-    LDR R0, =STCURRENT;
-    LDR R1, [R0]      ;  R1 becomes a random number = # CC < 5 msec
     BEQ STARTGAME
 
     SUBS R4, #1
@@ -281,10 +279,17 @@ to2loop
 	BX LR
 
 
-;; 
 STARTGAME
+    ; Initialize positions
+    MOV R4, #0x20    ; P1 Initial pos
+    MOV R5, #0x10    ; P2 Initial pos
+	MOV R8, #0       ; Contiguous drawn move counter
+ 
+STARTMOVE
 ; START OF A MOVE
     ; Random Delay > 1sec but less than 2 sec
+	LDR R0, =STCURRENT;
+    LDR R1, [R0]      ;  R1 becomes a random number = # CC < 5 msec
     AND R1, #3         ; examine only bits [1:0] of random value
     LDR R0, =0x509100      ; 5280000 cycles in 0.33 seconds
     MUL R1, R0        ; R1 becomes random number = 0 seconds < # CC < 1 second
@@ -292,41 +297,137 @@ STARTGAME
     ADD R0, R2, R1    ; R0 becomes random 1 to 2 seconds
     BL Wait1to2s
 
-    ; Initialize positions
-    MOV R4, #0x20    ; P1 Initial pos
-    MOV R5, #0x10    ; P2 Initial pos
-
     ; Separate LEDS
-    LSL R4, #1       ; P1 step back
-    LSR R5, #1       ; P2 step back
+    LSL R4, #1       ; P1 step back  R4 is P1 position
+    LSR R5, #1       ; P2 step back  R5 is P2 position
     ORR R1, R4, R5 ; Present positions
     BL Print
 
-MOVESTART
+
     ; Read buttons
+READButtons	LDR R6, =PORTF
+    LDR R1, [R6, #0x60]   ; R1[4]==0 means P2Pushed Pushed
+	; 0x00 if no one has pushed (branch to read buttons)
+	CMP R1, #0
+	BEQ READButtons
+
+	;0x20 if P2 pushed
+	CMP R1, #0x20
+	BEQ P2PushedFirst
+	
+	;0x40 if P1 pushed
+	CMP R1, #0x40
+	BEQ P1PushedFirst
+
+	; 0x60 if both simulatenous (Mario always wins)
+	CMP R1, #0x60
+	BEQ P1PushedFirst
+
 
 ;---------------------------
 ; P1PushedFirst
-; Start Delay timer  (counter for draws)
+P1PushedFirst
+
 ; P1Moves
     LSR R4, #1       ; P1 step fwd
+	ORR R1, R4, R5 ; Present positions
+    BL Print
 
-    ; P2 MovesInTime
-        LSL R5, #1       ; P2 step fwd
-        ; Draw, increment draw
+; Start Delay timer  (counter for draws)
+; Read DIP switches  
+; PB[3:0] are dip switches
+; PB[3:2] switches for P1
+     ; PB[1:0] switches for P2
 
-; else, P1 Total Win
-    ; P1MovesAgain
-        LSR R4, #1       ; P1 step fwd
-    
-    ;  Go to Start of move
-    B MOVESTART
+; Timer equation is 2^-min(d, 4) * (320 - 80*Sn) in ms
+; we have a wait5ms subtroutine, we will reuse it by calculating how many times 5ms needs to be waited
+; this means timer equations turns to 
+; 2^-min(d, 4) * (64 - 16*Sn) times to call wait5ms
+	LDR R6, =PORTB
+	; Read switches for P1 if P1 Pushed first
+    LDR R7, [R6, #0x30]   ; R7 now has P1 switches
+	MOV R2, #16           ; 
+	MUL R7, R7, R2
+	MOV R2, #64
+	SUB R7, R2, R7        ; R7 is running total 
+
+	; compare draw counter and 4, call Calculate exponent f(x)
+	CMP R8, #4         
+	IT LS
+	MOVLS R1, R8    ; R8 < 4, so we use R8
+	MOVHI R1, #4    ; R8 > 4, so we use #4 as exponent parameter
+	BL CalcExp
+	
+	MUL R7, R0, R7  ; R7 now has the delay time in times to call wait5ms
+	MOV R0, R7;
+	
+	BL WaitP1Delay
+	CMP R0, #1
+	BNE P1TotalWin
+	; P2 MovesInTime
+    LSL R5, #1       ; P2 step fwd
+    ORR R1, R4, R5 ; Present positions
+    BL Print
+ 	; Draw, increment draw
+	ADD R8, #1
+	B STARTMOVE
+P1TotalWin
+	LSR R4, #1       ; P1 step fwd
+	ORR R1, R4, R5 ; Present positions
+    BL Print
+	MOV R8, #0       ; Clear draw counter
+	BL CheckGAMEOVER
+	
+; WaitP1Delay function, calls wait5ms a certain number of times
+; this is called when P1 has pushed first
+; it checks if P2 has pushed
+; if P2 has pushed before time expires, it returns
+; Input: R0, number of times to call wait5ms
+; Output: R0, 1 means P2 pushed a button before timeout, 0 otherwise
+
+WaitP1Delay
+    PUSH {R4, R5, R6, R7, R8, R9, R10, R11, LR}	
+    MOV R4, R0   ; loop counter
+	MOV R0, #0   ; default return P2 did not push in time
+waitdelayloop
+    BL Wait5ms
+    CMP R1, #1   ; P2 pushed
+    BEQ exitwaitdelayloop
+    SUBS R4, #1
+    BEQ exitwaitdelaylooptimeout
+    B waitdelayloop
+exitwaitdelayloop
+	MOV R0, #1   ; P2 pushed in time
+exitwaitdelaylooptimeout
+	POP {R4, R5, R6, R7, R8, R9, R10, R11, LR}
+	BX LR
+
+; Function to calculate exponent
+; Input: R2, the exponenet of 2^exp to calculate
+; Output: R0, the result
+CalcExp
+	PUSH {R4, R5, R6, R7, R8, R9, R10, R11, LR} ; Nice Stack Frame usage
+	MOV R1, #0   ; Loop counter
+	MOV R4, #2   ; number to multiply
+	MOV R0, #1   ; initialize result to 1
+calcexploop
+	CMP R1, R2   ; i <= exp?
+	BEQ exitcalcexp
+	ADD R1, #1
+	; Body of code
+	MUL R0, R0, R4  ;
+	b calcexploop
+exitcalcexp
+	; R0 has result
+	POP {R4, R5, R6, R7, R8, R9, R10, R11, LR}
+	BX LR
+
 
 ;---------------------------
 ; P2PushedFirst
 ; Start Delay timer  (counter for draws)
 ; P2Moves
-    LSL R5, #1       ; P2 step fwd
+P2PushedFirst	LSL R5, #1       ; P2 step fwd
 
     ; P1 MovesInTime
         LSR R4, #1       ; P1 step fwd
@@ -336,15 +437,18 @@ MOVESTART
     LSL R5, #1       ; P2 step fwd
 
 ;  Go to Start of move
-    B MOVESTART
+    B STARTMOVE
 
 
+CheckGAMEOVER
     ; Check if GameOver
     ORR R1, R4, R5 ; Present positions
     CMP R1, #0x3
     BEQ GAMEOVER
     CMP R1, #0x300
     BEQ GAMEOVER
+	; Not game over, so go back to random timer for next move
+	BL STARTMOVE
 
 ; Flash @ 2 Hz
 GAMEOVER
