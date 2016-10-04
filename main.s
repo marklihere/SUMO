@@ -88,8 +88,10 @@ GPIOINIT
 	LDR R0, =PORTB
 	MOV R1, #0xF;
 	STR R1, [R0,#0x524] ; GPIOCR enable [3:0]
-	MOV R1, #0x0       ; [3:0] are inputs
+	MOV R1, #0x0;
+	STR R1, [R0,#0x420] ; disable alternative function
 	STR R1, [R0,#0x400] ; GPIODIR set as above
+	MOV R1, #0xF;
 	STR R1, [R0,#0x510] ; GPIOPUR [3:0]
 	STR R1, [R0,#0x51C] ; digital enable bits[3:0]
 	POP {LR}
@@ -180,10 +182,26 @@ flashloop
 ;; Returns R1:  [00], [01] P2 pushed, [10] P1 pushed, [11] tied
 Wait5ms
     PUSH {R4, R5, R6, R7, R8, R9, R10, R11, LR}	
-    LDR R0, =0x13880
-    SUB R0, #1          ; delay-1 because systick needs 1 clk cycle to set flag
-	LDR R1, =STRELOAD
-	STR R0, [R1]        ; set RELOAD value and start counting
+
+	LDR R1, =STCTRL
+	MOV R0, #0
+	STR R0, [R1]       ; Disable SysTick during initialization
+	LDR R1, =STRELOAD   ; initialize to max value
+	LDR R0, =0x13880 ; 
+	STR R0, [R1]
+	LDR R1, =STCURRENT
+	MOV R0, #0
+	STR R0, [R1]
+	LDR R1, =STCTRL
+	MOV R0, #5         ; Use internal clock and start counting
+	STR R0, [R1]
+
+
+
+;LDR R0, =0x13880
+;    SUB R0, #1          ; delay-1 because systick needs 1 clk cycle to set flag
+;	LDR R1, =STRELOAD
+;	STR R0, [R1]        ; set RELOAD value and start counting
     LDR R4, =STCTRL
     MOV R6, #0
 loop
@@ -262,13 +280,14 @@ P1Pushed
 	BX LR
 
 ;; --------------
-;; Input: R0 number of times to wait 0.25 seconds before returning
+;; Input: R0 number of clock cycles to wait equivalent to 1 to 2 seconds before returning
 Wait1to2s
     PUSH {R4, R5, R6, R7, R8, R9, R10, R11, LR}	
 	SUB R0, #1          ; delay-1 because systick needs 1 clk cycle to set flag
 	LDR R1, =STRELOAD
 	STR R0, [R1]        ; start counting seconds
     LDR R1, =STCURRENT
+	MOV R0, #5
 	STR R0, [R1]        ; start counting seconds
 	LDR R1, =STCTRL
 to2loop
@@ -308,19 +327,23 @@ STARTMOVE
 READButtons	LDR R6, =PORTF
     LDR R1, [R6, #0x60]   ; R1[4]==0 means P2Pushed Pushed
 	; 0x00 if no one has pushed (branch to read buttons)
-	CMP R1, #0
+	CMP R1, #0x18
 	BEQ READButtons
 
+;;0x10
+; 0x10 PF3 was pushed P1
+; 0x08 PF4 was pushed P2
+
 	;0x20 if P2 pushed
-	CMP R1, #0x20
+	CMP R1, #0x08
 	BEQ P2PushedFirst
 	
 	;0x40 if P1 pushed
-	CMP R1, #0x40
+	CMP R1, #0x10
 	BEQ P1PushedFirst
 
 	; 0x60 if both simulatenous (Mario always wins)
-	CMP R1, #0x60
+	CMP R1, #0x0
 	BEQ P1PushedFirst
 
 
@@ -345,7 +368,8 @@ P1PushedFirst
 ; 2^-min(d, 4) * (64 - 16*Sn) times to call wait5ms
 	LDR R6, =PORTB
 	; Read switches for P1 if P1 Pushed first
-    LDR R7, [R6, #0x30]   ; R7 now has P1 switches
+    LDR R7, [R6, #0x30]   ; R7 now has P1 switches [3:2]
+	LSR R7, #2;
 	MOV R2, #16           ; 
 	MUL R7, R7, R2
 	MOV R2, #64
@@ -353,16 +377,15 @@ P1PushedFirst
 
 	; compare draw counter and 4, call Calculate exponent f(x)
 	CMP R8, #4         
-	IT LS
-	MOVLS R1, R8    ; R8 < 4, so we use R8
-	MOVHI R1, #4    ; R8 > 4, so we use #4 as exponent parameter
+	ITE LS
+	MOVLS R2, R8    ; R8 < 4, so we use R8
+	MOVHI R2, #4    ; R8 > 4, so we use #4 as exponent parameter
 	BL CalcExp
 	
-	MUL R7, R0, R7  ; R7 now has the delay time in times to call wait5ms
-	MOV R0, R7;
+	;MOV R0, R7;  why am i moving the return calculated value  FINISH ME
 	
 	BL WaitP1Delay
-	CMP R0, #1
+	CMP R0, #1     ; 
 	BNE P1TotalWin
 	; P2 MovesInTime
     LSL R5, #1       ; P2 step fwd
@@ -391,7 +414,9 @@ WaitP1Delay
 	MOV R0, #0   ; default return P2 did not push in time
 waitdelayloop
     BL Wait5ms
-    CMP R1, #1   ; P2 pushed
+	MOV R5, #0x3
+	AND R1, R5
+    CMP R1, #1   ; P2 pushed  
     BEQ exitwaitdelayloop
     SUBS R4, #1
     BEQ exitwaitdelaylooptimeout
@@ -425,20 +450,73 @@ exitcalcexp
 
 ;---------------------------
 ; P2PushedFirst
-; Start Delay timer  (counter for draws)
-; P2Moves
-P2PushedFirst	LSL R5, #1       ; P2 step fwd
+P2PushedFirst	
 
-    ; P1 MovesInTime
-        LSR R4, #1       ; P1 step fwd
-        ; Draw, increment draw
+	; P2Moves
+	LSL R5, #1       ; P2 step fwd
+	ORR R1, R4, R5 ; Present positions
+    BL Print
+	
+	LDR R6, =PORTB
+	; Read switches for P1 if P1 Pushed first
+	;      ; PB[1:0] switches for P2
+    LDR R7, [R6, #0xC]   ; R7 now has P2 switches
+	MOV R2, #16           ; 
+	MUL R7, R7, R2
+	MOV R2, #64
+	SUB R7, R2, R7        ; R7 is running total 
 
-; else, P2 Total Win
-    LSL R5, #1       ; P2 step fwd
+	; compare draw counter and 4, call Calculate exponent f(x)
+	CMP R8, #4         
+	IT LS
+	MOVLS R1, R8    ; R8 < 4, so we use R8
+	MOVHI R1, #4    ; R8 > 4, so we use #4 as exponent parameter
+	BL CalcExp
+	
+	MOV R0, R7;
+	
+	BL WaitP2Delay
+	CMP R0, #1     ; 
+	BNE P2TotalWin
+	; P1 MovesInTime
+    LSR R4, #1       ; P1 step fwd
+    ORR R1, R4, R5 ; Present positions
+    BL Print
+ 	; Draw, increment draw
+	ADD R8, #1
+	B STARTMOVE
+P2TotalWin
+	LSL R5, #1       ; P2 step fwd
+	ORR R1, R4, R5 ; Present positions
+    BL Print
+	MOV R8, #0       ; Clear draw counter
+	BL CheckGAMEOVER
 
-;  Go to Start of move
-    B STARTMOVE
+; WaitP2Delay function, calls wait5ms a certain number of times
+; this is called when P2 has pushed first
+; it checks if P1 has pushed
+; if P1 has pushed before time expires, it returns
+; Input: R0, number of times to call wait5ms
+; Output: R0, 1 means P1 pushed a button before timeout, 0 otherwise
 
+WaitP2Delay
+    PUSH {R4, R5, R6, R7, R8, R9, R10, R11, LR}	
+    MOV R4, R0   ; loop counter
+	MOV R0, #0   ; default return P1 did not push in time
+waitP2delayloop
+    BL Wait5ms
+	MOV R5, #0x3
+	AND R1, R5
+    CMP R1, #0x2   ; P1 pushed  
+    BEQ exitwaitP2delayloop
+    SUBS R4, #1
+    BEQ exitwaitP2delaylooptimeout
+    B waitP2delayloop
+exitwaitP2delayloop
+	MOV R0, #1   ; P1 pushed in time
+exitwaitP2delaylooptimeout
+	POP {R4, R5, R6, R7, R8, R9, R10, R11, LR}
+	BX LR
 
 CheckGAMEOVER
     ; Check if GameOver
@@ -480,4 +558,3 @@ gameoverloop2
 
        ALIGN      
        END  
-           
