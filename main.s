@@ -23,7 +23,6 @@ STCURRENT EQU 0xE000E018  ;
 
 Start
     BL GPIOINIT
-    BL SYSTICK_INIT
 Init
     BL INSERTCOIN
     B   Init
@@ -90,28 +89,6 @@ GPIOINIT
     MOV R1, #0xF;
     STR R1, [R0,#0x510] ; GPIOPUR [3:0]
     STR R1, [R0,#0x51C] ; digital enable bits[3:0]
-    POP {LR}
-    BX LR
-
-;----------------------------------------------
-; Initialize SysTick
-;  INPUT: None  OUTPUT: None
-; Modifies: R0, R1
-;----------------------------------------------
-SYSTICK_INIT
-    PUSH {LR}
-    LDR R1, =STCTRL    ; Disable SysTick during initialization
-    MOV R0, #0
-    STR R0, [R1]   
-    LDR R1, =STRELOAD  ; initialize to max value
-    LDR R0, =0xFFFFFF
-    STR R0, [R1]
-    LDR R1, =STCURRENT ; Clear current
-    MOV R0, #0
-    STR R0, [R1]
-    LDR R1, =STCTRL    ; Use internal clock and start counting
-    MOV R0, #5     
-    STR R0, [R1]
     POP {LR}
     BX LR
 
