@@ -382,7 +382,8 @@ P1PushedFirst
 	MOVHI R2, #4    ; R8 > 4, so we use #4 as exponent parameter
 	BL CalcExp
 	
-	;MOV R0, R7;  why am i moving the return calculated value  FINISH ME
+	UDIV R0, R7, R0  ; 
+	
 	
 	BL WaitP1Delay
 	CMP R0, #1     ; 
@@ -469,11 +470,11 @@ P2PushedFirst
 	; compare draw counter and 4, call Calculate exponent f(x)
 	CMP R8, #4         
 	IT LS
-	MOVLS R1, R8    ; R8 < 4, so we use R8
-	MOVHI R1, #4    ; R8 > 4, so we use #4 as exponent parameter
+	MOVLS R2, R8    ; R8 < 4, so we use R8
+	MOVHI R2, #4    ; R8 > 4, so we use #4 as exponent parameter
 	BL CalcExp
 	
-	MOV R0, R7;
+	UDIV R0, R7, R0  ; 
 	
 	BL WaitP2Delay
 	CMP R0, #1     ; 
