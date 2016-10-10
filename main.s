@@ -271,22 +271,44 @@ P1PUSHED
 
 ;----------------------------------------------
 ; Wait 1 to 2 seconds random delay
-; INPUT: R0 number of CC to wait
-; FIX ME
+; INPUT: R0 number of times to call wait 5ms
 ;----------------------------------------------
 Wait1to2s
+;    PUSH {R4, R5, R6, R7, R8, R9, R10, R11, LR}    
+	;MOV R4, R0;     ; move input to temporary register for now
+	
+	; calculate
+	
+    ;LDR R1, =STCTRL     ; Disable SysTick during initialization
+    ;MOV R0, #0
+    ;STR R0, [R1]       
+    ;LDR R1, =STRELOAD   ; initialize to max value
+    ;LDR R0, =0x1387F    ; (79,999+1) clock cycles @ 62.5ns / CC = 5ms
+    ;SUB R0, #1          ; delay-1 because systick needs 1 clk cycle to set flag
+	;STR R0, [R1]        ; store the input delay parameter into reload value
+    ;LDR R1, =STCURRENT  ; Clear current SysTick value
+    ;MOV R0, #0
+    ;STR R0, [R1]
+    ;LDR R1, =STCTRL     ; Use internal clock and start counting
+    ;MOV R0, #5         
+    ;STR R0, [R1]
+
+;	LDR R1, =STRELOAD
+;    STR R0, [R1]        ; start counting seconds
+;    LDR R1, =STCURRENT
+;    MOV R0, #5
+;    STR R0, [R1]        ; start counting seconds
+;    LDR R1, =STCTRL
     PUSH {R4, R5, R6, R7, R8, R9, R10, R11, LR}    
-    SUB R0, #1          ; delay-1 because systick needs 1 clk cycle to set flag
-    LDR R1, =STRELOAD
-    STR R0, [R1]        ; start counting seconds
-    LDR R1, =STCURRENT
-    MOV R0, #5
-    STR R0, [R1]        ; start counting seconds
-    LDR R1, =STCTRL
-to2loop
-    LDR R3, [R1]        ; R3 = STCTRL
-    ANDS R3, R3, #0x10000   ; is count set?
-    BEQ to2loop
+    MOV R4, R0     ; R4 = delay counter
+wait1to2loop
+    BL WAIT5MS     
+
+	SUBS R4, #1     ; Delay counter --
+    BEQ exitwait1to2loop
+    B wait1to2loop
+
+exitwait1to2loop
      POP {R4, R5, R6, R7, R8, R9, R10, R11, LR}
     BX LR
 
@@ -312,7 +334,9 @@ STARTMOVE
     LDR R0, =0x509100  ; 5280000 cycles in 0.33 seconds
     MUL R1, R0         ; R1 becomes random number = 0 seconds < # CC < 1 second
     LDR R2, =0xF42400  ; #CC (16,000,000 * 62.5 ns = 1second)
-    ADD R0, R2, R1     ; R0 becomes random 1 to 2 seconds
+    ADD R0, R2, R1     ; R0 becomes # of CC equiv to random 1 to 2 seconds {1, 1.33, 1.66, 2} seconds
+	LDR R2, =0x13880   ; 80,000 in hex, b/c 5ms / 62.5ns = 80,000
+	UDIV R0, R0, R2;	
     BL Wait1to2s
 
     ; Separate LEDS
